@@ -1,0 +1,16 @@
+{
+  "name": "dryun-enrollment",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Secure Cloudflare Worker connecting the dryun.org household enrollment page to SignWell and Stripe.",
+  "dependencies": {
+    "stripe": "^16.12.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  }
+}
