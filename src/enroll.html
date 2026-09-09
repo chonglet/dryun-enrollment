@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Complete Your Enrollment | Chong Yun, MD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Herr+Von+Muellerhoff&family=Fraunces:ital,opsz,wght@0,9..144,380;0,9..144,420;0,9..144,500;0,9..144,600;1,9..144,420;1,9..144,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #12141b;
+  --paper: #f8f2e6;
+  --paper-2: #efe2c4;
+  --gold: #b0873f;
+  --gold-deep: #8c6a30;
+  --gold-soft: #ddbf82;
+  --line: #ddc79a;
+  --text: #201d16;
+  --muted: #766f5a;
+  --shadow: 0 30px 70px rgba(20, 23, 31, 0.22);
+  --max: 900px;
+  --error: #b3402f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: 'Jost', Arial, sans-serif; color: var(--text);
+  background: var(--paper); line-height: 1.7; font-size: 16px; font-weight: 300;
+  background-image:
+    radial-gradient(circle at 15% 8%, rgba(176,135,63,0.07), transparent 40%),
+    radial-gradient(circle at 85% 92%, rgba(176,135,63,0.06), transparent 40%);
+  background-attachment: fixed;
+}
+a { color: inherit; }
+.container { width: min(92%, var(--max)); margin: 0 auto; padding: 56px 0 100px; }
+h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; margin: 0; color: var(--ink); font-weight: 460; letter-spacing: -0.01em; }
+.eyebrow {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.26em; color: var(--gold-deep);
+  font-weight: 600; display: inline-flex; align-items: center; gap: 10px; margin-bottom: 18px;
+}
+.eyebrow::before, .eyebrow::after { content: ""; width: 22px; height: 1px; background: var(--gold); display: inline-block; }
+.intro { max-width: 62ch; }
+.intro p { color: var(--muted); font-size: 1rem; }
+.panel {
+  background: #fff; border: 1px solid var(--line); padding: 36px;
+  box-shadow: 0 18px 40px rgba(20,23,31,0.06); margin-top: 36px;
+}
+.member-card {
+  border: 1px solid var(--line); background: var(--paper-2); padding: 24px;
+  margin-bottom: 18px; position: relative;
+}
+.member-card .member-head {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
+}
+.member-card .member-head h3 { font-size: 1rem; font-style: italic; }
+.remove-member {
+  background: none; border: none; color: var(--error); font-size: 0.78rem;
+  letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; font-family: 'Jost';
+}
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px; }
+@media (max-width: 640px) { .field-row { grid-template-columns: 1fr; } }
+label { display: block; margin-bottom: 6px; font-size: 0.82rem; font-weight: 500; color: var(--ink); }
+input[type="text"], input[type="email"], input[type="date"], select {
+  width: 100%; min-height: 46px; border-radius: 2px; border: 1px solid #d6cdb3;
+  background: #fdfcf7; padding: 10px 14px; font-size: 0.96rem; color: var(--text);
+  outline: none; font-family: 'Jost', Arial, sans-serif; box-sizing: border-box;
+}
+input:focus, select:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,138,63,0.15); }
+.category-badge {
+  display: inline-block; margin-top: 4px; font-size: 0.78rem; color: var(--gold-deep);
+  font-weight: 500;
+}
+.category-badge.ineligible { color: var(--error); }
+.add-member {
+  display: inline-flex; align-items: center; gap: 8px; padding: 13px 26px;
+  border: 1px solid var(--gold); color: var(--ink); font-size: 0.74rem; letter-spacing: 0.12em;
+  text-transform: uppercase; background: transparent; cursor: pointer; font-family: 'Jost';
+  transition: all 0.2s ease;
+}
+.add-member:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+.summary {
+  background: var(--ink); color: #fff; padding: 34px 36px; margin-top: 32px;
+}
+.summary h3 { color: var(--gold-soft); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.16em; font-weight: 500; margin-bottom: 18px; font-family: 'Jost'; }
+.summary-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.14); font-size: 0.96rem; }
+.summary-row:last-of-type { border-bottom: none; }
+.summary-total { display: flex; justify-content: space-between; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--gold); font-family: 'Fraunces', serif; font-size: 1.3rem; font-style: italic; }
+.continue-btn {
+  width: 100%; margin-top: 28px; padding: 17px 30px; background: var(--gold-deep);
+  border: 1px solid var(--gold-deep); color: #fff; font-size: 0.8rem; letter-spacing: 0.14em;
+  text-transform: uppercase; cursor: pointer; transition: all 0.2s ease; font-family: 'Jost';
+}
+.continue-btn:hover:not(:disabled) { background: transparent; border-color: var(--gold-soft); color: var(--gold-soft); }
+.continue-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.error-banner {
+  background: #fbeceb; border: 1px solid var(--error); color: var(--error);
+  padding: 14px 18px; font-size: 0.9rem; margin-top: 18px; display: none;
+}
+.footnote { font-size: 0.82rem; color: var(--muted); margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <span class="eyebrow">Household Enrollment</span>
+  <h1>Let's set up your membership.</h1>
+  <div class="intro">
+    <p>Add each member of your household who is enrolling. Membership rates are determined automatically by age. All agreements and communications will be sent to the primary applicant's email — other household members don't need their own.</p>
+  </div>
+
+  <form id="enroll-form" class="panel" novalidate>
+    <div id="members"></div>
+
+    <button type="button" class="add-member" id="add-member">+ Add Household Member</button>
+
+    <div class="summary">
+      <h3>Your Household Membership</h3>
+      <div id="summary-rows"></div>
+      <div class="summary-total">
+        <span>Annual Total</span>
+        <span id="summary-total">$0</span>
+      </div>
+    </div>
+
+    <div class="error-banner" id="error-banner"></div>
+
+    <button type="submit" class="continue-btn" id="continue-btn" disabled>Continue to Agreements</button>
+    <p class="footnote">Each household member has a separate agreement to sign, one after another. Once all are signed, you'll be sent directly to secure payment. Nothing is charged until payment is completed.</p>
+  </form>
+</div>
+
+<script>
+// ---- Membership rules (mirrors current 2026 Founding Member rates) ----
+// Adjust here if pricing/brackets change; the backend re-validates everything server-side.
+const CATEGORIES = [
+  { id: 'adult',  label: 'Adult Founding',       min: 27, max: 200, price: 3000 },
+  { id: 'family', label: 'Family Member 16–26',  min: 16, max: 26,  price: 1500 },
+  { id: 'child',  label: 'Child 10–15',          min: 10, max: 15,  price: 750  },
+];
+
+function categoryForAge(age) {
+  if (age === null || isNaN(age)) return null;
+  return CATEGORIES.find(c => age >= c.min && age <= c.max) || null;
+}
+
+function ageFromDOB(dobStr) {
+  if (!dobStr) return null;
+  const dob = new Date(dobStr);
+  if (isNaN(dob.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const m = now.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age--;
+  return age;
+}
+
+let memberCount = 0;
+const membersEl = document.getElementById('members');
+
+function addMember(isPrimary = false) {
+  memberCount++;
+  const id = 'm' + memberCount;
+  const wrap = document.createElement('div');
+  wrap.className = 'member-card';
+  wrap.dataset.id = id;
+  wrap.innerHTML = `
+    <div class="member-head">
+      <h3>${isPrimary ? 'Primary Adult (You)' : 'Household Member ' + (memberCount - 1)}</h3>
+      ${isPrimary ? '' : '<button type="button" class="remove-member">Remove</button>'}
+    </div>
+    <div class="field-row">
+      <div>
+        <label>Full Name</label>
+        <input type="text" class="f-name" required>
+      </div>
+      <div>
+        <label>Date of Birth</label>
+        <input type="date" class="f-dob" required>
+      </div>
+    </div>
+    <div class="field-row" style="${isPrimary ? '' : 'grid-template-columns: 1fr;'}">
+      ${isPrimary ? `
+      <div>
+        <label>Email</label>
+        <input type="email" class="f-email" required>
+      </div>
+      <div>
+        <label>Relationship</label>
+        <input type="text" value="Primary applicant" disabled style="opacity:.6">
+      </div>` : `
+      <div>
+        <label>Relationship to Primary Adult</label>
+        <select class="f-relationship" required>
+          <option value="">Select…</option>
+          <option value="spouse">Spouse / Partner</option>
+          <option value="child">Child</option>
+          <option value="other">Other Dependent</option>
+        </select>
+      </div>`}
+    </div>
+    <div class="category-badge" data-role="category">Enter date of birth to determine membership category.</div>
+  `;
+  membersEl.appendChild(wrap);
+
+  const dobInput = wrap.querySelector('.f-dob');
+  dobInput.addEventListener('change', () => updateCategory(wrap));
+  wrap.querySelectorAll('input, select').forEach(el => el.addEventListener('input', renderSummary));
+
+  const removeBtn = wrap.querySelector('.remove-member');
+  if (removeBtn) {
+    removeBtn.addEventListener('click', () => {
+      wrap.remove();
+      renderSummary();
+    });
+  }
+  renderSummary();
+}
+
+function updateCategory(wrap) {
+  const dob = wrap.querySelector('.f-dob').value;
+  const age = ageFromDOB(dob);
+  const badge = wrap.querySelector('[data-role="category"]');
+  const cat = categoryForAge(age);
+  wrap.dataset.age = age === null ? '' : age;
+  if (age === null) {
+    badge.textContent = 'Enter date of birth to determine membership category.';
+    badge.classList.remove('ineligible');
+    wrap.dataset.category = '';
+  } else if (!cat) {
+    badge.textContent = age < 10
+      ? 'Members under 10 aren\u2019t enrolled directly \u2014 please contact the office.'
+      : 'Please contact the office to confirm the right membership for this age.';
+    badge.classList.add('ineligible');
+    wrap.dataset.category = '';
+  } else {
+    badge.textContent = `${cat.label} \u2014 $${cat.price.toLocaleString()}/yr`;
+    badge.classList.remove('ineligible');
+    wrap.dataset.category = cat.id;
+  }
+  renderSummary();
+}
+
+function collectMembers() {
+  return Array.from(membersEl.querySelectorAll('.member-card')).map(wrap => {
+    const isPrimary = wrap.dataset.id === 'm1';
+    return {
+      isPrimary,
+      name: wrap.querySelector('.f-name').value.trim(),
+      dob: wrap.querySelector('.f-dob').value,
+      email: wrap.querySelector('.f-email') ? wrap.querySelector('.f-email').value.trim() : '',
+      relationship: isPrimary ? 'primary' : (wrap.querySelector('.f-relationship')?.value || ''),
+      category: wrap.dataset.category || '',
+      age: wrap.dataset.age || '',
+    };
+  });
+}
+
+function renderSummary() {
+  const members = collectMembers();
+  const rowsEl = document.getElementById('summary-rows');
+  const totalEl = document.getElementById('summary-total');
+  const continueBtn = document.getElementById('continue-btn');
+  rowsEl.innerHTML = '';
+  let total = 0;
+  let allValid = members.length > 0;
+
+  members.forEach(m => {
+    const cat = CATEGORIES.find(c => c.id === m.category);
+    if (!m.name || !m.dob || !cat || (m.isPrimary && !m.email)) allValid = false;
+    if (cat) {
+      total += cat.price;
+      const row = document.createElement('div');
+      row.className = 'summary-row';
+      row.innerHTML = `<span>${m.name || '(name pending)'} — ${cat.label}</span><span>$${cat.price.toLocaleString()}</span>`;
+      rowsEl.appendChild(row);
+    }
+  });
+
+  totalEl.textContent = '$' + total.toLocaleString();
+  continueBtn.disabled = !allValid || total === 0;
+}
+
+document.getElementById('add-member').addEventListener('click', () => addMember(false));
+addMember(true); // primary adult always present
+
+const form = document.getElementById('enroll-form');
+const errorBanner = document.getElementById('error-banner');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorBanner.style.display = 'none';
+  const continueBtn = document.getElementById('continue-btn');
+  continueBtn.disabled = true;
+  continueBtn.textContent = 'Preparing your agreement…';
+
+  const members = collectMembers();
+
+  try {
+    // NOTE: set BACKEND_URL to your deployed Vercel project URL once live.
+    const BACKEND_URL = window.DRYUN_BACKEND_URL || 'https://dryun-enrollment.chonglet.workers.dev';
+    const res = await fetch(BACKEND_URL + '/api/create-enrollment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ members }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.signingDocuments || !data.payUrl) {
+      throw new Error(data.error || 'Something went wrong preparing your enrollment.');
+    }
+
+    signAllInSequence(data.signingDocuments, data.payUrl);
+  } catch (err) {
+    errorBanner.textContent = err.message || 'Something went wrong. Please try again, or contact the office.';
+    errorBanner.style.display = 'block';
+    continueBtn.disabled = false;
+    continueBtn.textContent = 'Continue to Agreements';
+  }
+});
+
+function signAllInSequence(signingDocuments, payUrl) {
+  let index = 0;
+
+  function signNext() {
+    if (index >= signingDocuments.length) {
+      window.location.href = payUrl;
+      return;
+    }
+    const doc = signingDocuments[index];
+    continueBtn.textContent = `Signing for ${doc.name} (${index + 1} of ${signingDocuments.length})…`;
+    openSignWellEmbed(doc.signingUrl, () => {
+      index++;
+      signNext();
+    });
+  }
+
+  signNext();
+}
+
+function openSignWellEmbed(signingUrl, onCompleted) {
+  function launch() {
+    const embed = new window.SignWellEmbed({
+      url: signingUrl,
+      events: {
+        completed: () => { onCompleted(); },
+        closed: () => {
+          continueBtn.disabled = false;
+          continueBtn.textContent = 'Continue to Agreements';
+        },
+      },
+    });
+    embed.open();
+  }
+
+  if (window.SignWellEmbed) {
+    launch();
+    return;
+  }
+  const script = document.createElement('script');
+  script.src = 'https://static.signwell.com/assets/embedded.js';
+  script.onload = launch;
+  script.onerror = () => {
+    errorBanner.textContent = 'Could not load the signing window. Please try again, or contact the office.';
+    errorBanner.style.display = 'block';
+    continueBtn.disabled = false;
+    continueBtn.textContent = 'Continue to Agreements';
+  };
+  document.head.appendChild(script);
+}
+</script>
+</body>
+</html>
