@@ -168,7 +168,7 @@ async function handlePay(request, env) {
   } catch (err) {
     console.error(err);
     return new Response(
-      'Something went wrong setting up payment. Please contact the office — your agreement is signed, nothing was charged.',
+    "DEBUG: " + (err.message || String(err)),
       { status: 500 }
     );
   }
