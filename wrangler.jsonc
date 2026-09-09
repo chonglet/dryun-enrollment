@@ -2,5 +2,17 @@
   "name": "dryun-enrollment",
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
-  "compatibility_flags": ["nodejs_compat"]
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "SIGNWELL_TEST_MODE": "true",
+    "SIGNWELL_TEMPLATE_ADULT": "8d1ea75c-afbd-4272-90f7-84f5b1ece93f",
+    "SIGNWELL_TEMPLATE_CHILD": "6c86711f-534b-428a-8375-3f3e0e94e89e",
+    "SIGNWELL_TEMPLATE_FAMILY": "b67e0000-28a9-4a75-b667-ce4863432b41",
+    "STRIPE_PRICE_ADULT": "price_1UC1RC5W2FZLEHi1RbKb68SN",
+    "STRIPE_PRICE_CHILD": "price_1UDWbM5W2FZLEHi1bQnk6JHd",
+    "STRIPE_PRICE_FAMILY": "price_1UDWbd5W2FZLEHi1ZXXph5rP",
+    "SUCCESS_URL": "https://dryun.org/thank-you.html",
+    "CANCEL_URL": "https://dryun.org/enroll.html",
+    "ALLOWED_ORIGIN": "https://dryun.org"
+  }
 }
