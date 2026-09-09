@@ -56,7 +56,7 @@ export function validateAndPriceMembers(members) {
     throw new Error('Exactly one primary adult is required.');
   }
 
-  return members.map((m) => {
+  const priced = members.map((m) => {
     if (!m.name || !m.dob) {
       throw new Error('Each member needs a name and date of birth.');
     }
@@ -70,9 +70,6 @@ export function validateAndPriceMembers(members) {
     if (m.isPrimary && categoryKey !== 'adult') {
       throw new Error('The primary applicant must qualify for the Adult Founding membership.');
     }
-    if (!m.isPrimary && m.email === '' && categoryKey !== 'child') {
-      throw new Error(`"${m.name}" needs an email address to receive their agreement.`);
-    }
     return {
       ...m,
       age,
@@ -80,4 +77,13 @@ export function validateAndPriceMembers(members) {
       categoryLabel: CATEGORIES[categoryKey].label,
     };
   });
+
+  // SignWell needs a real email for every recipient. A minor without
+  // their own address gets the primary adult's email, so the parent
+  // receives and can review that member's agreement too.
+  const primaryEmail = priced.find((m) => m.isPrimary)?.email;
+  return priced.map((m) => ({
+    ...m,
+    email: m.email || primaryEmail,
+  }));
 }

@@ -80,10 +80,13 @@ async function handleCreateEnrollment(request, env) {
     recipients.push({
       id: String(i + 1),
       name: m.name,
-      email: m.email || undefined,
-      // Confirmed via SignWell's Get Template API response: all three
-      // templates use "Patient" as their single-signer placeholder name.
-      placeholder_name: 'Patient',
+      email: m.email,
+      // Confirmed via SignWell's Get Template API: every template uses
+      // "Patient" as its single placeholder. But merging multiple
+      // DIFFERENT templates into one document requires each recipient's
+      // placeholder_name to be unique across the whole request — so we
+      // number them. SignWell maps recipient-to-template by this order.
+      placeholder_name: `Patient_${i + 1}`,
     });
   }
 
