@@ -81,10 +81,7 @@ async function handleCreateEnrollment(request, env) {
       id: String(i + 1),
       name: m.name,
       email: m.email || undefined,
-      // TODO: confirm this matches the actual placeholder name inside
-      // each SignWell template (check Template > Placeholders in the
-      // SignWell dashboard). Common patterns: "Adult", "Parent/Guardian", "Child".
-      placeholder_name: m.categoryLabel,
+              placeholder_name: 'Patient',
     });
   }
 
