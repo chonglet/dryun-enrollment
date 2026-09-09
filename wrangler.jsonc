@@ -3,6 +3,12 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
   "vars": {
     "SIGNWELL_TEST_MODE": "true",
     "SIGNWELL_TEMPLATE_ADULT": "8d1ea75c-afbd-4272-90f7-84f5b1ece93f",
