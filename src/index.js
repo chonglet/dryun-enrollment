@@ -52,89 +52,77 @@ async function handleCreateEnrollment(request, env) {
   );
 
   const url = new URL(request.url);
-  const redirectUrl = `${url.origin}/api/pay?token=${encodeURIComponent(token)}`;
+  const payUrl = `${url.origin}/api/pay?token=${encodeURIComponent(token)}`;
 
-  // --- Build template_ids + recipients ---
-  // NOTE (please verify before going live): this assumes each template
-  // has a single placeholder whose name matches the category, and that
-  // requesting the SAME template twice (e.g. two children) is safe to
-  // do by listing it twice in template_ids. That second part is NOT
-  // confirmed in SignWell's docs — test it in Test Mode with two
-  // same-category members before relying on it. If it doesn't work
-  // cleanly, the fallback is to create separate sequential documents
-  // per same-category member instead of one combined packet.
-  const templateIds = [];
-  const recipients = [];
+  // Each household member gets their OWN separate SignWell document.
+  // (A combined multi-template packet was tried first, but SignWell
+  // treats identically-named placeholders across merged templates as
+  // ONE shared role, not one per template — so three people can't
+  // each fill a "Patient" role in a single merged document. Separate
+  // documents, signed in sequence client-side, sidesteps that.)
   const templateEnvByCategory = {
     adult: 'SIGNWELL_TEMPLATE_ADULT',
     family: 'SIGNWELL_TEMPLATE_FAMILY',
     child: 'SIGNWELL_TEMPLATE_CHILD',
   };
 
-  for (const [i, m] of members.entries()) {
+  const signingDocuments = [];
+  for (const m of members) {
     const templateId = env[templateEnvByCategory[m.category]];
     if (!templateId) {
       return jsonResponse({ error: `Missing configured template for ${m.category}.` }, 500, env);
     }
-    templateIds.push(templateId);
-    recipients.push({
-      id: String(i + 1),
-      name: m.name,
-      email: m.email,
-      // Confirmed via SignWell's Get Template API: every template uses
-      // "Patient" as its single placeholder. But merging multiple
-      // DIFFERENT templates into one document requires each recipient's
-      // placeholder_name to be unique across the whole request — so we
-      // number them. SignWell maps recipient-to-template by this order.
-      placeholder_name: `Patient_${i + 1}`,
-    });
+
+    const signwellBody = {
+      test_mode: env.SIGNWELL_TEST_MODE === 'true',
+      template_ids: [templateId],
+      recipients: [
+        {
+          id: '1',
+          name: m.name,
+          email: m.email,
+          placeholder_name: 'Patient',
+        },
+      ],
+      draft: false,
+      embedded_signing: true,
+      metadata: { enrollment_id: enrollmentId, member_name: m.name },
+    };
+
+    try {
+      const swRes = await fetch(SIGNWELL_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Api-Key': env.SIGNWELL_API_KEY,
+        },
+        body: JSON.stringify(signwellBody),
+      });
+      const swData = await swRes.json();
+
+      if (!swRes.ok) {
+        console.error('SignWell error:', JSON.stringify(swData));
+        return jsonResponse(
+          { error: `Could not create the agreement for ${m.name}. Please try again or contact the office.` },
+          502,
+          env
+        );
+      }
+
+      const signingUrl = swData.recipients?.[0]?.embedded_signing_url || swData.embedded_signing_url;
+      if (!signingUrl) {
+        console.error('No signing URL in SignWell response:', JSON.stringify(swData));
+        return jsonResponse({ error: 'Could not retrieve a signing link. Please contact the office.' }, 502, env);
+      }
+
+      signingDocuments.push({ name: m.name, signingUrl });
+    } catch (err) {
+      console.error(err);
+      return jsonResponse({ error: 'Unexpected error creating the enrollment.' }, 500, env);
+    }
   }
 
-  const signwellBody = {
-    test_mode: env.SIGNWELL_TEST_MODE === 'true',
-    template_ids: templateIds,
-    recipients,
-    draft: false,
-    embedded_signing: true,
-    redirect_url: redirectUrl,
-    metadata: { enrollment_id: enrollmentId },
-  };
-
-  try {
-    const swRes = await fetch(SIGNWELL_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key': env.SIGNWELL_API_KEY,
-      },
-      body: JSON.stringify(signwellBody),
-    });
-    const swData = await swRes.json();
-
-    if (!swRes.ok) {
-      console.error('SignWell error:', JSON.stringify(swData));
-      return jsonResponse(
-        { error: 'Could not create the enrollment agreement. Please try again or contact the office.' },
-        502,
-        env
-      );
-    }
-
-    const signingUrl = swData.recipients?.[0]?.embedded_signing_url || swData.embedded_signing_url;
-    if (!signingUrl) {
-      console.error('No signing URL in SignWell response:', JSON.stringify(swData));
-      return jsonResponse({ error: 'Could not retrieve a signing link. Please contact the office.' }, 502, env);
-    }
-
-    // Embedded signing does NOT honor redirect_url automatically (that
-    // only works for hosted/shared links). The client uses payUrl with
-    // SignWell's JS "completed" event to redirect manually once signing
-    // is actually done.
-    return jsonResponse({ enrollmentId, signingUrl, payUrl: redirectUrl }, 200, env);
-  } catch (err) {
-    console.error(err);
-    return jsonResponse({ error: 'Unexpected error creating the enrollment.' }, 500, env);
-  }
+  return jsonResponse({ enrollmentId, payUrl, signingDocuments }, 200, env);
 }
 
 // ---------- /api/pay ----------
