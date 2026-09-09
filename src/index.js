@@ -81,7 +81,9 @@ async function handleCreateEnrollment(request, env) {
       id: String(i + 1),
       name: m.name,
       email: m.email || undefined,
-              placeholder_name: 'Patient',
+      // Confirmed via SignWell's Get Template API response: all three
+      // templates use "Patient" as their single-signer placeholder name.
+      placeholder_name: 'Patient',
     });
   }
 
@@ -121,7 +123,11 @@ async function handleCreateEnrollment(request, env) {
       return jsonResponse({ error: 'Could not retrieve a signing link. Please contact the office.' }, 502, env);
     }
 
-    return jsonResponse({ enrollmentId, signingUrl }, 200, env);
+    // Embedded signing does NOT honor redirect_url automatically (that
+    // only works for hosted/shared links). The client uses payUrl with
+    // SignWell's JS "completed" event to redirect manually once signing
+    // is actually done.
+    return jsonResponse({ enrollmentId, signingUrl, payUrl: redirectUrl }, 200, env);
   } catch (err) {
     console.error(err);
     return jsonResponse({ error: 'Unexpected error creating the enrollment.' }, 500, env);
