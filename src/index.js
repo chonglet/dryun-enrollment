@@ -1,21 +1,21 @@
-import Stripe from 'stripe';
-import { validateAndPriceMembers, CATEGORIES } from './pricing.js';
-import { signEnrollment, verifyEnrollment } from './token.js';
+import Stripe from "stripe";
+import { validateAndPriceMembers, CATEGORIES } from "./pricing.js";
+import { signEnrollment, verifyEnrollment } from "./token.js";
 
-const SIGNWELL_ENDPOINT = 'https://www.signwell.com/api/v1/document_templates/documents';
+const SIGNWELL_ENDPOINT = "https://www.signwell.com/api/v1/document_templates/documents";
 
 function corsHeaders(env) {
   return {
-    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
   };
 }
 
 function jsonResponse(data, status, env) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders(env) },
+    headers: { "Content-Type": "application/json", ...corsHeaders(env) },
   });
 }
 
@@ -25,13 +25,12 @@ function getStripe(env) {
   });
 }
 
-// ---------- /api/create-enrollment ----------
 async function handleCreateEnrollment(request, env) {
   let body;
   try {
     body = await request.json();
   } catch {
-    return jsonResponse({ error: 'Invalid request body.' }, 400, env);
+    return jsonResponse({ error: "Invalid request body." }, 400, env);
   }
 
   let members;
@@ -41,7 +40,7 @@ async function handleCreateEnrollment(request, env) {
     return jsonResponse({ error: err.message }, 400, env);
   }
 
-  const enrollmentId = 'ENR-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+  const enrollmentId = "ENR-" + Math.random().toString(36).slice(2, 8).toUpperCase();
 
   const token = await signEnrollment(
     {
@@ -54,19 +53,14 @@ async function handleCreateEnrollment(request, env) {
   const url = new URL(request.url);
   const payUrl = `${url.origin}/api/pay?token=${encodeURIComponent(token)}`;
 
-  // Each household member gets their OWN separate SignWell document.
-  // (A combined multi-template packet was tried first, but SignWell
-  // treats identically-named placeholders across merged templates as
-  // ONE shared role, not one per template — so three people can't
-  // each fill a "Patient" role in a single merged document. Separate
-  // documents, signed in sequence client-side, sidesteps that.)
   const templateEnvByCategory = {
-    adult: 'SIGNWELL_TEMPLATE_ADULT',
-    family: 'SIGNWELL_TEMPLATE_FAMILY',
-    child: 'SIGNWELL_TEMPLATE_CHILD',
+    adult: "SIGNWELL_TEMPLATE_ADULT",
+    family: "SIGNWELL_TEMPLATE_FAMILY",
+    child: "SIGNWELL_TEMPLATE_CHILD",
   };
 
   const signingDocuments = [];
+
   for (const m of members) {
     const templateId = env[templateEnvByCategory[m.category]];
     if (!templateId) {
@@ -74,14 +68,14 @@ async function handleCreateEnrollment(request, env) {
     }
 
     const signwellBody = {
-      test_mode: env.SIGNWELL_TEST_MODE === 'true',
+      test_mode: env.SIGNWELL_TEST_MODE === "true",
       template_ids: [templateId],
       recipients: [
         {
-          id: '1',
+          id: "1",
           name: m.name,
           email: m.email,
-          placeholder_name: 'Patient',
+          placeholder_name: "Patient",
         },
       ],
       draft: false,
@@ -91,17 +85,18 @@ async function handleCreateEnrollment(request, env) {
 
     try {
       const swRes = await fetch(SIGNWELL_ENDPOINT, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Key': env.SIGNWELL_API_KEY,
+          "Content-Type": "application/json",
+          "X-Api-Key": env.SIGNWELL_API_KEY,
         },
         body: JSON.stringify(signwellBody),
       });
+
       const swData = await swRes.json();
 
       if (!swRes.ok) {
-        console.error('SignWell error:', JSON.stringify(swData));
+        console.error("SignWell error:", JSON.stringify(swData));
         return jsonResponse(
           { error: `Could not create the agreement for ${m.name}. Please try again or contact the office.` },
           502,
@@ -110,26 +105,26 @@ async function handleCreateEnrollment(request, env) {
       }
 
       const signingUrl = swData.recipients?.[0]?.embedded_signing_url || swData.embedded_signing_url;
+
       if (!signingUrl) {
-        console.error('No signing URL in SignWell response:', JSON.stringify(swData));
-        return jsonResponse({ error: 'Could not retrieve a signing link. Please contact the office.' }, 502, env);
+        console.error("No signing URL in SignWell response:", JSON.stringify(swData));
+        return jsonResponse({ error: "Could not retrieve a signing link. Please contact the office." }, 502, env);
       }
 
       signingDocuments.push({ name: m.name, signingUrl });
     } catch (err) {
       console.error(err);
-      return jsonResponse({ error: 'Unexpected error creating the enrollment.' }, 500, env);
+      return jsonResponse({ error: "Unexpected error creating the enrollment." }, 500, env);
     }
   }
 
   return jsonResponse({ enrollmentId, payUrl, signingDocuments }, 200, env);
 }
 
-// ---------- /api/pay ----------
 async function handlePay(request, env) {
   const url = new URL(request.url);
-  const token = url.searchParams.get('token');
-  if (!token) return new Response('Missing enrollment token.', { status: 400 });
+  const token = url.searchParams.get("token");
+  if (!token) return new Response("Missing enrollment token.", { status: 400 });
 
   let enrollment;
   try {
@@ -139,28 +134,31 @@ async function handlePay(request, env) {
   }
 
   try {
-    const lineItems = enrollment.members.map((m) => {
+    // Group members by their Stripe price ID so duplicate categories (e.g. two
+    // adults) become a single line item with quantity > 1, rather than two
+    // separate line items referencing the same recurring price — Stripe
+    // rejects the latter for subscriptions.
+    const priceGroups = {};
+    for (const m of enrollment.members) {
       const priceId = env[CATEGORIES[m.category].stripePriceEnv];
       if (!priceId) throw new Error(`Missing configured price for ${m.category}.`);
-      return { price: priceId, quantity: 1 };
-    });
+      priceGroups[priceId] = (priceGroups[priceId] || 0) + 1;
+    }
+    const lineItems = Object.entries(priceGroups).map(([price, quantity]) => ({
+      price,
+      quantity,
+    }));
 
     const stripe = getStripe(env);
 
-    // NOTE: 'subscription' assumes the three Stripe Price objects are
-    // set up as recurring (yearly) prices, which fits "$X/yr" billing
-    // and lets Stripe auto-renew members each year via ACH. If any of
-    // these Prices were created as one-time instead, change this to
-    // 'payment' — check each Price's "Recurring" setting in the Stripe
-    // dashboard before going live.
     const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
+      mode: "subscription",
       line_items: lineItems,
       success_url: `${env.SUCCESS_URL}?enrollment=${enrollment.enrollmentId}`,
       cancel_url: env.CANCEL_URL,
       metadata: {
         enrollment_id: enrollment.enrollmentId,
-        member_names: enrollment.members.map((m) => m.name).join(', '),
+        member_names: enrollment.members.map((m) => m.name).join(", "),
       },
     });
 
@@ -168,56 +166,43 @@ async function handlePay(request, env) {
   } catch (err) {
     console.error(err);
     return new Response(
-    "DEBUG: " + (err.message || String(err)),
+      "Something went wrong setting up payment. Please contact the office — your agreement is signed, nothing was charged.",
       { status: 500 }
     );
   }
 }
 
-// ---------- /api/webhooks/stripe ----------
 async function handleStripeWebhook(request, env) {
-  const sig = request.headers.get('stripe-signature');
+  const sig = request.headers.get("stripe-signature");
   const rawBody = await request.text();
   const stripe = getStripe(env);
 
   let event;
   try {
-    // constructEventAsync (not the sync constructEvent) is required in
-    // Workers/edge runtimes, since signature verification uses Web Crypto.
     event = await stripe.webhooks.constructEventAsync(rawBody, sig, env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    console.error('Stripe webhook signature verification failed:', err.message);
+    console.error("Stripe webhook signature verification failed:", err.message);
     return new Response(`Webhook Error: ${err.message}`, { status: 400 });
   }
 
-  if (event.type === 'checkout.session.completed') {
+  if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     console.log(`Enrollment ${session.metadata?.enrollment_id} paid. Members: ${session.metadata?.member_names}`);
-
-    // TODO: this is the natural place to:
-    //  - send the welcome email (referral-credit offer lives here per
-    //    the patient-acquisition plan)
-    //  - notify the office (e.g. a Slack/email ping) that a new
-    //    household has enrolled and paid
-    //  - kick off CharmHealth / EHR record creation, if automating that later
   }
 
   return jsonResponse({ received: true }, 200, env);
 }
 
-// ---------- /api/webhooks/signwell ----------
 async function handleSignwellWebhook(request, env) {
-  // This webhook is a backup audit trail, not the primary flow — see
-  // README for why. TODO before relying on it for anything beyond
-  // logging: verify the payload signature per SignWell's "Event Hash
-  // Verification" docs.
   let event;
   try {
     event = await request.json();
   } catch {
-    return jsonResponse({ error: 'Invalid payload' }, 400, env);
+    return jsonResponse({ error: "Invalid payload" }, 400, env);
   }
-  console.log('SignWell event:', event?.event?.type, JSON.stringify(event?.data?.object?.metadata));
+
+  console.log("SignWell event:", event?.event?.type, JSON.stringify(event?.data?.object?.metadata));
+
   return jsonResponse({ received: true }, 200, env);
 }
 
@@ -226,27 +211,27 @@ export default {
     const url = new URL(request.url);
     const { pathname } = url;
 
-    if (request.method === 'OPTIONS') {
+    if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(env) });
     }
 
     try {
-      if (pathname === '/api/create-enrollment' && request.method === 'POST') {
+      if (pathname === "/api/create-enrollment" && request.method === "POST") {
         return await handleCreateEnrollment(request, env);
       }
-      if (pathname === '/api/pay' && request.method === 'GET') {
+      if (pathname === "/api/pay" && request.method === "GET") {
         return await handlePay(request, env);
       }
-      if (pathname === '/api/webhooks/stripe' && request.method === 'POST') {
+      if (pathname === "/api/webhooks/stripe" && request.method === "POST") {
         return await handleStripeWebhook(request, env);
       }
-      if (pathname === '/api/webhooks/signwell' && request.method === 'POST') {
+      if (pathname === "/api/webhooks/signwell" && request.method === "POST") {
         return await handleSignwellWebhook(request, env);
       }
-      return new Response('Not found', { status: 404 });
+      return new Response("Not found", { status: 404 });
     } catch (err) {
       console.error(err);
-      return jsonResponse({ error: 'Unexpected server error.' }, 500, env);
+      return jsonResponse({ error: "Unexpected server error." }, 500, env);
     }
   },
 };
