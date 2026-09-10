@@ -130,8 +130,8 @@ async function handleCreateEnrollment(request, env) {
 
     await env.DB.prepare(
       `INSERT INTO enrollments
-        (enrollment_id, created_at, primary_name, primary_email, member_names, member_count, signing_status, members_signed, payment_status, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, 'unpaid', ?)`
+        (enrollment_id, created_at, primary_name, primary_email, member_names, member_count, signing_status, members_signed, payment_status, billing_interval, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, 'unpaid', 'annual', ?)`
     )
       .bind(enrollmentId, ts, primary?.name || "", primary?.email || "", memberNames, members.length, ts)
       .run();
@@ -196,6 +196,12 @@ async function handlePay(request, env) {
       line_items: lineItems,
       success_url: `${env.SUCCESS_URL}?enrollment=${enrollment.enrollmentId}`,
       cancel_url: env.CANCEL_URL,
+      subscription_data: {
+        metadata: {
+          enrollment_id: enrollment.enrollmentId,
+          member_names: enrollment.members.map((m) => m.name).join(", "),
+        },
+      },
       metadata: {
         enrollment_id: enrollment.enrollmentId,
         member_names: enrollment.members.map((m) => m.name).join(", "),
@@ -235,6 +241,7 @@ async function handleStripeWebhook(request, env) {
     return new Response(`Webhook Error: ${err.message}`, { status: 400 });
   }
 
+  // Initial checkout completion — marks the very first payment for a new enrollment.
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const enrollmentId = session.metadata?.enrollment_id;
@@ -245,13 +252,98 @@ async function handleStripeWebhook(request, env) {
         const ts = nowISO();
         await env.DB.prepare(
           `UPDATE enrollments
-           SET payment_status = 'paid', paid_at = ?, stripe_subscription_id = ?, updated_at = ?
+           SET payment_status = 'paid', paid_at = ?, stripe_subscription_id = ?,
+               last_payment_status = 'paid', last_payment_at = ?, updated_at = ?
            WHERE enrollment_id = ?`
         )
-          .bind(ts, session.subscription || null, ts, enrollmentId)
+          .bind(ts, session.subscription || null, ts, ts, enrollmentId)
           .run();
       } catch (err) {
-        console.error("D1 write failed on stripe webhook:", err);
+        console.error("D1 write failed on stripe webhook (checkout.session.completed):", err);
+      }
+    }
+  }
+
+  // Every successful charge going forward — renewals for annual/monthly/quarterly patients,
+  // and the very first payment for patients set up manually (monthly/quarterly via a
+  // Stripe Payment Link, outside the enroll.html flow).
+  if (event.type === "invoice.paid") {
+    const invoice = event.data.object;
+    const subscriptionId = invoice.subscription;
+    const ts = nowISO();
+
+    if (subscriptionId) {
+      try {
+        const existing = await env.DB.prepare(
+          `SELECT enrollment_id FROM enrollments WHERE stripe_subscription_id = ?`
+        )
+          .bind(subscriptionId)
+          .first();
+
+        if (existing) {
+          await env.DB.prepare(
+            `UPDATE enrollments
+             SET last_payment_status = 'paid', last_payment_at = ?, updated_at = ?
+             WHERE stripe_subscription_id = ?`
+          )
+            .bind(ts, ts, subscriptionId)
+            .run();
+        } else {
+          // No matching enrollment yet — likely a manually-created monthly/quarterly
+          // patient (Payment Link, not the enroll.html flow). Look up the subscription
+          // to read whatever metadata was set on it, and create a row now.
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          const meta = subscription.metadata || {};
+          const newEnrollmentId = "MEM-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+
+          await env.DB.prepare(
+            `INSERT INTO enrollments
+              (enrollment_id, created_at, primary_name, primary_email, member_names, member_count,
+               signing_status, members_signed, payment_status, paid_at, stripe_subscription_id,
+               billing_interval, last_payment_status, last_payment_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'n/a', 0, 'paid', ?, ?, ?, 'paid', ?, ?)`
+          )
+            .bind(
+              newEnrollmentId,
+              ts,
+              meta.primary_name || invoice.customer_name || "Unknown",
+              meta.primary_email || invoice.customer_email || "",
+              meta.member_names || meta.primary_name || invoice.customer_name || "Unknown",
+              parseInt(meta.member_count || "1", 10),
+              ts,
+              subscriptionId,
+              meta.billing_interval || "manual",
+              ts,
+              ts
+            )
+            .run();
+
+          console.log(`Created new manual enrollment ${newEnrollmentId} from invoice.paid for subscription ${subscriptionId}`);
+        }
+      } catch (err) {
+        console.error("D1 write failed on invoice.paid:", err);
+      }
+    }
+  }
+
+  // A renewal charge failed — surface this so the office can follow up before the
+  // membership silently lapses.
+  if (event.type === "invoice.payment_failed") {
+    const invoice = event.data.object;
+    const subscriptionId = invoice.subscription;
+    const ts = nowISO();
+
+    if (subscriptionId) {
+      try {
+        await env.DB.prepare(
+          `UPDATE enrollments
+           SET last_payment_status = 'failed', last_payment_at = ?, updated_at = ?
+           WHERE stripe_subscription_id = ?`
+        )
+          .bind(ts, ts, subscriptionId)
+          .run();
+      } catch (err) {
+        console.error("D1 write failed on invoice.payment_failed:", err);
       }
     }
   }
@@ -334,7 +426,8 @@ async function handleAdminEnrollments(request, env) {
   try {
     const result = await env.DB.prepare(
       `SELECT enrollment_id, created_at, primary_name, primary_email, member_names, member_count,
-              signing_status, members_signed, all_signed_at, payment_status, paid_at, reminder_sent_at
+              signing_status, members_signed, all_signed_at, payment_status, paid_at, reminder_sent_at,
+              billing_interval, last_payment_status, last_payment_at
        FROM enrollments
        ORDER BY created_at DESC
        LIMIT 200`
@@ -349,12 +442,23 @@ async function handleAdminEnrollments(request, env) {
     String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   const statusBadge = (row) => {
-    if (row.payment_status === "paid") return `<span style="color:#1a7f37;font-weight:600;">Paid</span>`;
+    if (row.last_payment_status === "failed") {
+      return `<span style="color:#b3402f;font-weight:600;">Payment Failed</span><br><span style="color:#766f5a;font-size:0.8em;">${escapeHtml(row.last_payment_at)}</span>`;
+    }
+    if (row.payment_status === "paid") {
+      const renewal = row.last_payment_at && row.last_payment_at !== row.paid_at
+        ? `<br><span style="color:#766f5a;font-size:0.8em;">Last payment ${escapeHtml(row.last_payment_at)}</span>`
+        : "";
+      return `<span style="color:#1a7f37;font-weight:600;">Paid</span>${renewal}`;
+    }
     if (row.signing_status === "completed") {
       const reminder = row.reminder_sent_at
         ? `<br><span style="color:#766f5a;font-size:0.8em;">Reminder sent ${escapeHtml(row.reminder_sent_at)}</span>`
         : "";
       return `<span style="color:#b3402f;font-weight:600;">Signed — Not Paid</span>${reminder}`;
+    }
+    if (row.signing_status === "n/a") {
+      return `<span style="color:#766f5a;">Not tracked</span>`;
     }
     return `<span style="color:#766f5a;">Signing in progress (${row.members_signed}/${row.member_count})</span>`;
   };
@@ -366,6 +470,7 @@ async function handleAdminEnrollments(request, env) {
       <td>${escapeHtml(row.created_at)}</td>
       <td>${escapeHtml(row.primary_name)}<br><span style="color:#766f5a;font-size:0.85em;">${escapeHtml(row.primary_email)}</span></td>
       <td>${escapeHtml(row.member_names)}</td>
+      <td>${escapeHtml(row.billing_interval || "annual")}</td>
       <td>${statusBadge(row)}</td>
       <td>${escapeHtml(row.paid_at) || "—"}</td>
       <td style="font-family:monospace;font-size:0.85em;">${escapeHtml(row.enrollment_id)}</td>
@@ -391,10 +496,10 @@ async function handleAdminEnrollments(request, env) {
   <h1>Enrollments (most recent 200)</h1>
   <table>
     <thead>
-      <tr><th>Created</th><th>Primary</th><th>Household</th><th>Status</th><th>Paid At</th><th>Enrollment ID</th></tr>
+      <tr><th>Created</th><th>Primary</th><th>Household</th><th>Billing</th><th>Status</th><th>First Paid</th><th>Enrollment ID</th></tr>
     </thead>
     <tbody>
-      ${tableRows || '<tr><td colspan="6">No enrollments yet.</td></tr>'}
+      ${tableRows || '<tr><td colspan="7">No enrollments yet.</td></tr>'}
     </tbody>
   </table>
 </body>
@@ -407,7 +512,7 @@ async function handleAdminEnrollments(request, env) {
 }
 
 async function checkAndSendReminders(env) {
-     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
   const result = await env.DB.prepare(
     `SELECT enrollment_id, primary_name, primary_email, member_count
