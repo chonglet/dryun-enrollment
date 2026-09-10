@@ -123,8 +123,6 @@ async function handleCreateEnrollment(request, env) {
     }
   }
 
-  // Record the enrollment in D1 so we have visibility into it even if the
-  // patient never finishes signing or never pays.
   try {
     const primary = members.find((m) => m.isPrimary);
     const memberNames = members.map((m) => m.name).join(", ");
@@ -478,6 +476,76 @@ async function checkAndSendReminders(env) {
   }
 }
 
+async function handleReserve(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: "Invalid request body." }, 400, env);
+  }
+
+  const first_name = (body?.first_name || "").trim();
+  const last_name = (body?.last_name || "").trim();
+  const email = (body?.email || "").trim();
+  const phone = (body?.phone || "").trim();
+  const texas_resident = (body?.texas_resident || "").trim();
+
+  if (!first_name || !last_name || !email) {
+    return jsonResponse({ error: "Missing required fields." }, 400, env);
+  }
+
+  const ts = nowISO();
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO reservations (created_at, first_name, last_name, email, phone, texas_resident, email_sent)
+       VALUES (?, ?, ?, ?, ?, ?, 0)`
+    )
+      .bind(ts, first_name, last_name, email, phone, texas_resident)
+      .run();
+  } catch (err) {
+    console.error("D1 write failed on reserve:", err);
+  }
+
+  const enrollUrl = "https://dryun.org/enroll.html";
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from: "onboarding@resend.dev",
+        to: email,
+        subject: "Thank you for reserving your Founding Membership spot",
+        html: `
+          <p>Hi ${first_name},</p>
+          <p>Thank you for your interest in becoming a Founding Member with Chong "Joy" Yun, MD. I've received your information and will follow up personally to confirm next steps.</p>
+          <p>Whenever you're ready, you can go ahead and start your enrollment here:</p>
+          <p><a href="${enrollUrl}">Begin Enrollment</a></p>
+          <p>If you have any questions in the meantime, feel free to reply to this email or contact the office directly.</p>
+        `,
+      }),
+    });
+
+    if (res.ok) {
+      await env.DB.prepare(
+        `UPDATE reservations SET email_sent = 1 WHERE email = ? AND created_at = ?`
+      )
+        .bind(email, ts)
+        .run();
+    } else {
+      console.error("Resend error on reserve confirmation:", await res.text());
+    }
+  } catch (err) {
+    console.error("Failed to send reservation confirmation email:", err);
+  }
+
+  return jsonResponse({ received: true }, 200, env);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -502,6 +570,9 @@ export default {
       }
       if (pathname === "/api/admin/enrollments" && request.method === "GET") {
         return await handleAdminEnrollments(request, env);
+      }
+      if (pathname === "/api/reserve" && request.method === "POST") {
+        return await handleReserve(request, env);
       }
       return new Response("Not found", { status: 404 });
     } catch (err) {
