@@ -407,7 +407,7 @@ async function handleAdminEnrollments(request, env) {
 }
 
 async function checkAndSendReminders(env) {
-     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString(); // TEMP: 2 min for testing
+     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
   const result = await env.DB.prepare(
     `SELECT enrollment_id, primary_name, primary_email, member_count
