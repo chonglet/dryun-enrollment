@@ -448,7 +448,7 @@ async function checkAndSendReminders(env) {
           Authorization: `Bearer ${env.RESEND_API_KEY}`,
         },
         body: JSON.stringify({
-          from: "onboarding@resend.dev",
+          from: "Chong Yun, MD <noreply@dryun.org>",
           to: enrollment.primary_email,
           subject: "Finish setting up your Chong Yun, MD membership",
           html: `
@@ -517,7 +517,7 @@ async function handleReserve(request, env) {
         Authorization: `Bearer ${env.RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: "onboarding@resend.dev",
+        from: "Chong Yun, MD <noreply@dryun.org>",
         to: email,
         subject: "Thank you for reserving your Founding Membership spot",
         html: `
