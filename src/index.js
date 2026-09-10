@@ -521,11 +521,13 @@ async function handleReserve(request, env) {
         to: email,
         subject: "Thank you for reserving your Founding Membership spot",
         html: `
-          <p>Hi ${first_name},</p>
-          <p>Thank you for your interest in becoming a Founding Member with Chong "Joy" Yun, MD. I've received your information and will follow up personally to confirm next steps.</p>
-          <p>Whenever you're ready, you can go ahead and start your enrollment here:</p>
-          <p><a href="${enrollUrl}">Begin Enrollment</a></p>
-          <p>If you have any questions in the meantime, feel free to reply to this email or contact the office directly.</p>
+         html: `
+  <p>Hi ${first_name},</p>
+  <p>Thank you for your interest in becoming a Founding Member with Chong "Joy" Yun, MD. I've received your information and will follow up personally to confirm next steps.</p>
+  <p>Whenever you're ready, you can go ahead and start your enrollment here:</p>
+  <p><a href="${enrollUrl}">Begin Enrollment</a></p>
+  <p style="color:#766f5a;font-size:0.9em;">If you've already completed your enrollment, please disregard this message.</p>
+  <p>If you have any questions in the meantime, feel free to reply to this email or contact the office directly.</p>
         `,
       }),
     });
