@@ -3,6 +3,7 @@ import { validateAndPriceMembers, CATEGORIES } from "./pricing.js";
 import { signEnrollment, verifyEnrollment } from "./token.js";
 
 const SIGNWELL_ENDPOINT = "https://www.signwell.com/api/v1/document_templates/documents";
+const WORKER_ORIGIN = "https://dryun-enrollment.chonglet.workers.dev";
 
 function corsHeaders(env) {
   return {
@@ -146,8 +147,6 @@ async function handleCreateEnrollment(request, env) {
         .run();
     }
   } catch (err) {
-    // Don't block the enrollment flow if the database write fails — log it
-    // and continue, since SignWell documents were already created.
     console.error("D1 write failed on create-enrollment:", err);
   }
 
@@ -166,9 +165,6 @@ async function handlePay(request, env) {
     return Response.redirect(`${env.CANCEL_URL}?error=expired_link`, 302);
   }
 
-  // Guard against a patient reusing an old payment link after they've
-  // already paid — check our own record before creating a new Checkout
-  // session, so they aren't charged twice.
   try {
     const existing = await env.DB.prepare(
       `SELECT payment_status FROM enrollments WHERE enrollment_id = ?`
@@ -180,8 +176,6 @@ async function handlePay(request, env) {
       return Response.redirect(`${env.SUCCESS_URL}?enrollment=${enrollment.enrollmentId}`, 302);
     }
   } catch (err) {
-    // If the check itself fails, don't block payment — fall through and
-    // let Stripe be the source of truth as before.
     console.error("D1 read failed on handlePay pre-check:", err);
   }
 
@@ -330,8 +324,6 @@ async function handleSignwellWebhook(request, env) {
   return jsonResponse({ received: true }, 200, env);
 }
 
-// Simple password-protected admin view of all enrollments, so the office can
-// see at a glance who has signed but not yet paid, without watching logs.
 async function handleAdminEnrollments(request, env) {
   const url = new URL(request.url);
   const key = url.searchParams.get("key");
@@ -344,7 +336,7 @@ async function handleAdminEnrollments(request, env) {
   try {
     const result = await env.DB.prepare(
       `SELECT enrollment_id, created_at, primary_name, primary_email, member_names, member_count,
-              signing_status, members_signed, all_signed_at, payment_status, paid_at
+              signing_status, members_signed, all_signed_at, payment_status, paid_at, reminder_sent_at
        FROM enrollments
        ORDER BY created_at DESC
        LIMIT 200`
@@ -360,7 +352,12 @@ async function handleAdminEnrollments(request, env) {
 
   const statusBadge = (row) => {
     if (row.payment_status === "paid") return `<span style="color:#1a7f37;font-weight:600;">Paid</span>`;
-    if (row.signing_status === "completed") return `<span style="color:#b3402f;font-weight:600;">Signed — Not Paid</span>`;
+    if (row.signing_status === "completed") {
+      const reminder = row.reminder_sent_at
+        ? `<br><span style="color:#766f5a;font-size:0.8em;">Reminder sent ${escapeHtml(row.reminder_sent_at)}</span>`
+        : "";
+      return `<span style="color:#b3402f;font-weight:600;">Signed — Not Paid</span>${reminder}`;
+    }
     return `<span style="color:#766f5a;">Signing in progress (${row.members_signed}/${row.member_count})</span>`;
   };
 
@@ -411,6 +408,76 @@ async function handleAdminEnrollments(request, env) {
   });
 }
 
+async function checkAndSendReminders(env) {
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+  const result = await env.DB.prepare(
+    `SELECT enrollment_id, primary_name, primary_email, member_count
+     FROM enrollments
+     WHERE signing_status = 'completed'
+       AND payment_status = 'unpaid'
+       AND created_at <= ?
+       AND reminder_sent_at IS NULL`
+  )
+    .bind(twoHoursAgo)
+    .all();
+
+  const stale = result.results || [];
+
+  for (const enrollment of stale) {
+    const membersResult = await env.DB.prepare(
+      `SELECT member_name, category FROM enrollment_members WHERE enrollment_id = ?`
+    )
+      .bind(enrollment.enrollment_id)
+      .all();
+
+    const members = (membersResult.results || []).map((m) => ({
+      name: m.member_name,
+      category: m.category,
+    }));
+
+    const token = await signEnrollment(
+      { enrollmentId: enrollment.enrollment_id, members },
+      env.TOKEN_SECRET
+    );
+    const payUrl = `${WORKER_ORIGIN}/api/pay?token=${encodeURIComponent(token)}`;
+
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        },
+        body: JSON.stringify({
+          from: "onboarding@resend.dev",
+          to: enrollment.primary_email,
+          subject: "Finish setting up your Chong Yun, MD membership",
+          html: `
+            <p>Hi ${enrollment.primary_name},</p>
+            <p>Your membership agreement${enrollment.member_count > 1 ? "s are" : " is"} signed — the only step left is completing payment.</p>
+            <p><a href="${payUrl}">Click here to finish enrolling</a></p>
+            <p>If you have any questions, feel free to reply to this email or contact the office directly.</p>
+          `,
+        }),
+      });
+
+      if (res.ok) {
+        await env.DB.prepare(
+          `UPDATE enrollments SET reminder_sent_at = ? WHERE enrollment_id = ?`
+        )
+          .bind(nowISO(), enrollment.enrollment_id)
+          .run();
+        console.log(`Reminder sent for ${enrollment.enrollment_id}`);
+      } else {
+        console.error(`Resend error for ${enrollment.enrollment_id}:`, await res.text());
+      }
+    } catch (err) {
+      console.error(`Failed to send reminder for ${enrollment.enrollment_id}:`, err);
+    }
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -441,5 +508,9 @@ export default {
       console.error(err);
       return jsonResponse({ error: "Unexpected server error." }, 500, env);
     }
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(checkAndSendReminders(env));
   },
 };
