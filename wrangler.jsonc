@@ -9,6 +9,13 @@
       "invocation_logs": true
     }
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dryun-enrollments",
+      "database_id": "fd1bb8c7-ef28-41d0-a43d-a656052b4987"
+    }
+  ],
   "vars": {
     "SIGNWELL_TEST_MODE": "true",
     "SIGNWELL_TEMPLATE_ADULT": "8d1ea75c-afbd-4272-90f7-84f5b1ece93f",
