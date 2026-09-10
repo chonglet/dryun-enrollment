@@ -25,6 +25,10 @@ function getStripe(env) {
   });
 }
 
+function nowISO() {
+  return new Date().toISOString();
+}
+
 async function handleCreateEnrollment(request, env) {
   let body;
   try {
@@ -118,6 +122,35 @@ async function handleCreateEnrollment(request, env) {
     }
   }
 
+  // Record the enrollment in D1 so we have visibility into it even if the
+  // patient never finishes signing or never pays.
+  try {
+    const primary = members.find((m) => m.isPrimary);
+    const memberNames = members.map((m) => m.name).join(", ");
+    const ts = nowISO();
+
+    await env.DB.prepare(
+      `INSERT INTO enrollments
+        (enrollment_id, created_at, primary_name, primary_email, member_names, member_count, signing_status, members_signed, payment_status, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, 'unpaid', ?)`
+    )
+      .bind(enrollmentId, ts, primary?.name || "", primary?.email || "", memberNames, members.length, ts)
+      .run();
+
+    for (const m of members) {
+      await env.DB.prepare(
+        `INSERT INTO enrollment_members (enrollment_id, member_name, category, signing_status)
+         VALUES (?, ?, ?, 'sent')`
+      )
+        .bind(enrollmentId, m.name, m.category)
+        .run();
+    }
+  } catch (err) {
+    // Don't block the enrollment flow if the database write fails — log it
+    // and continue, since SignWell documents were already created.
+    console.error("D1 write failed on create-enrollment:", err);
+  }
+
   return jsonResponse({ enrollmentId, payUrl, signingDocuments }, 200, env);
 }
 
@@ -133,11 +166,26 @@ async function handlePay(request, env) {
     return Response.redirect(`${env.CANCEL_URL}?error=expired_link`, 302);
   }
 
+  // Guard against a patient reusing an old payment link after they've
+  // already paid — check our own record before creating a new Checkout
+  // session, so they aren't charged twice.
   try {
-    // Group members by their Stripe price ID so duplicate categories (e.g. two
-    // adults) become a single line item with quantity > 1, rather than two
-    // separate line items referencing the same recurring price — Stripe
-    // rejects the latter for subscriptions.
+    const existing = await env.DB.prepare(
+      `SELECT payment_status FROM enrollments WHERE enrollment_id = ?`
+    )
+      .bind(enrollment.enrollmentId)
+      .first();
+
+    if (existing && existing.payment_status === "paid") {
+      return Response.redirect(`${env.SUCCESS_URL}?enrollment=${enrollment.enrollmentId}`, 302);
+    }
+  } catch (err) {
+    // If the check itself fails, don't block payment — fall through and
+    // let Stripe be the source of truth as before.
+    console.error("D1 read failed on handlePay pre-check:", err);
+  }
+
+  try {
     const priceGroups = {};
     for (const m of enrollment.members) {
       const priceId = env[CATEGORIES[m.category].stripePriceEnv];
@@ -162,11 +210,21 @@ async function handlePay(request, env) {
       },
     });
 
+    try {
+      await env.DB.prepare(
+        `UPDATE enrollments SET stripe_session_id = ?, updated_at = ? WHERE enrollment_id = ?`
+      )
+        .bind(session.id, nowISO(), enrollment.enrollmentId)
+        .run();
+    } catch (err) {
+      console.error("D1 write failed recording session id:", err);
+    }
+
     return Response.redirect(session.url, 303);
   } catch (err) {
     console.error(err);
     return new Response(
-      "DEBUG: " + (err.message || String(err)),
+      "Something went wrong setting up payment. Please contact the office — your agreement is signed, nothing was charged.",
       { status: 500 }
     );
   }
@@ -187,7 +245,23 @@ async function handleStripeWebhook(request, env) {
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
-    console.log(`Enrollment ${session.metadata?.enrollment_id} paid. Members: ${session.metadata?.member_names}`);
+    const enrollmentId = session.metadata?.enrollment_id;
+    console.log(`Enrollment ${enrollmentId} paid. Members: ${session.metadata?.member_names}`);
+
+    if (enrollmentId) {
+      try {
+        const ts = nowISO();
+        await env.DB.prepare(
+          `UPDATE enrollments
+           SET payment_status = 'paid', paid_at = ?, stripe_subscription_id = ?, updated_at = ?
+           WHERE enrollment_id = ?`
+        )
+          .bind(ts, session.subscription || null, ts, enrollmentId)
+          .run();
+      } catch (err) {
+        console.error("D1 write failed on stripe webhook:", err);
+      }
+    }
   }
 
   return jsonResponse({ received: true }, 200, env);
@@ -201,9 +275,140 @@ async function handleSignwellWebhook(request, env) {
     return jsonResponse({ error: "Invalid payload" }, 400, env);
   }
 
-  console.log("SignWell event:", event?.event?.type, JSON.stringify(event?.data?.object?.metadata));
+  const eventType = event?.event?.type;
+  const metadata = event?.data?.object?.metadata;
+  console.log("SignWell event:", eventType, JSON.stringify(metadata));
+
+  const enrollmentId = metadata?.enrollment_id;
+  const memberName = metadata?.member_name;
+
+  if (enrollmentId && memberName && eventType === "document_completed") {
+    try {
+      const ts = nowISO();
+
+      await env.DB.prepare(
+        `UPDATE enrollment_members
+         SET signing_status = 'completed', signed_at = ?
+         WHERE enrollment_id = ? AND member_name = ?`
+      )
+        .bind(ts, enrollmentId, memberName)
+        .run();
+
+      const remaining = await env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM enrollment_members WHERE enrollment_id = ? AND signing_status != 'completed'`
+      )
+        .bind(enrollmentId)
+        .first();
+
+      const signedCountRow = await env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM enrollment_members WHERE enrollment_id = ? AND signing_status = 'completed'`
+      )
+        .bind(enrollmentId)
+        .first();
+
+      const allSigned = remaining && remaining.cnt === 0;
+
+      await env.DB.prepare(
+        `UPDATE enrollments
+         SET members_signed = ?, signing_status = ?, all_signed_at = CASE WHEN ? THEN ? ELSE all_signed_at END, updated_at = ?
+         WHERE enrollment_id = ?`
+      )
+        .bind(
+          signedCountRow?.cnt || 0,
+          allSigned ? "completed" : "in_progress",
+          allSigned ? 1 : 0,
+          ts,
+          ts,
+          enrollmentId
+        )
+        .run();
+    } catch (err) {
+      console.error("D1 write failed on signwell webhook:", err);
+    }
+  }
 
   return jsonResponse({ received: true }, 200, env);
+}
+
+// Simple password-protected admin view of all enrollments, so the office can
+// see at a glance who has signed but not yet paid, without watching logs.
+async function handleAdminEnrollments(request, env) {
+  const url = new URL(request.url);
+  const key = url.searchParams.get("key");
+
+  if (!env.ADMIN_KEY || key !== env.ADMIN_KEY) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  let rows;
+  try {
+    const result = await env.DB.prepare(
+      `SELECT enrollment_id, created_at, primary_name, primary_email, member_names, member_count,
+              signing_status, members_signed, all_signed_at, payment_status, paid_at
+       FROM enrollments
+       ORDER BY created_at DESC
+       LIMIT 200`
+    ).all();
+    rows = result.results || [];
+  } catch (err) {
+    console.error("D1 read failed on admin view:", err);
+    return new Response("Database error.", { status: 500 });
+  }
+
+  const escapeHtml = (s) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const statusBadge = (row) => {
+    if (row.payment_status === "paid") return `<span style="color:#1a7f37;font-weight:600;">Paid</span>`;
+    if (row.signing_status === "completed") return `<span style="color:#b3402f;font-weight:600;">Signed — Not Paid</span>`;
+    return `<span style="color:#766f5a;">Signing in progress (${row.members_signed}/${row.member_count})</span>`;
+  };
+
+  const tableRows = rows
+    .map(
+      (row) => `
+    <tr>
+      <td>${escapeHtml(row.created_at)}</td>
+      <td>${escapeHtml(row.primary_name)}<br><span style="color:#766f5a;font-size:0.85em;">${escapeHtml(row.primary_email)}</span></td>
+      <td>${escapeHtml(row.member_names)}</td>
+      <td>${statusBadge(row)}</td>
+      <td>${escapeHtml(row.paid_at) || "—"}</td>
+      <td style="font-family:monospace;font-size:0.85em;">${escapeHtml(row.enrollment_id)}</td>
+    </tr>`
+    )
+    .join("");
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>Enrollments | Dr. Yun</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; padding: 32px; background: #f8f2e6; color: #201d16; }
+  h1 { font-size: 1.4rem; }
+  table { border-collapse: collapse; width: 100%; background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #ddc79a; font-size: 0.9rem; vertical-align: top; }
+  th { background: #12141b; color: #fff; font-weight: 500; }
+  tr:hover { background: #fdfaf2; }
+</style>
+</head>
+<body>
+  <h1>Enrollments (most recent 200)</h1>
+  <table>
+    <thead>
+      <tr><th>Created</th><th>Primary</th><th>Household</th><th>Status</th><th>Paid At</th><th>Enrollment ID</th></tr>
+    </thead>
+    <tbody>
+      ${tableRows || '<tr><td colspan="6">No enrollments yet.</td></tr>'}
+    </tbody>
+  </table>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
 }
 
 export default {
@@ -227,6 +432,9 @@ export default {
       }
       if (pathname === "/api/webhooks/signwell" && request.method === "POST") {
         return await handleSignwellWebhook(request, env);
+      }
+      if (pathname === "/api/admin/enrollments" && request.method === "GET") {
+        return await handleAdminEnrollments(request, env);
       }
       return new Response("Not found", { status: 404 });
     } catch (err) {
