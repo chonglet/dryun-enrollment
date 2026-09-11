@@ -151,6 +151,120 @@ async function handleCreateEnrollment(request, env) {
   return jsonResponse({ enrollmentId, payUrl, signingDocuments }, 200, env);
 }
 
+// Solo, single-adult enrollment for the private monthly/quarterly pages —
+// no household logic, one signer, one price.
+async function handleCreateSoloEnrollment(request, env, interval) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: "Invalid request body." }, 400, env);
+  }
+
+  const name = (body?.name || "").trim();
+  const email = (body?.email || "").trim();
+
+  if (!name || !email) {
+    return jsonResponse({ error: "Name and email are required." }, 400, env);
+  }
+
+  const templateEnvKey = interval === "monthly" ? "SIGNWELL_TEMPLATE_ADULT_MONTHLY" : "SIGNWELL_TEMPLATE_ADULT_QUARTERLY";
+  const priceEnvKey = interval === "monthly" ? "STRIPE_PRICE_ADULT_MONTHLY" : "STRIPE_PRICE_ADULT_QUARTERLY";
+
+  const templateId = env[templateEnvKey];
+  if (!templateId) {
+    return jsonResponse({ error: `Missing configured template for ${interval}.` }, 500, env);
+  }
+
+  const enrollmentId = "ENR-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+
+  const token = await signEnrollment(
+    {
+      enrollmentId,
+      solo: true,
+      billingInterval: interval,
+      priceEnvKey,
+      name,
+      email,
+    },
+    env.TOKEN_SECRET
+  );
+
+  const url = new URL(request.url);
+  const payUrl = `${url.origin}/api/pay?token=${encodeURIComponent(token)}`;
+
+  const signwellBody = {
+    test_mode: env.SIGNWELL_TEST_MODE === "true",
+    template_ids: [templateId],
+    recipients: [
+      {
+        id: "1",
+        name,
+        email,
+        placeholder_name: "Patient",
+      },
+    ],
+    draft: false,
+    embedded_signing: true,
+    metadata: { enrollment_id: enrollmentId, member_name: name },
+  };
+
+  let signingUrl;
+  try {
+    const swRes = await fetch(SIGNWELL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Api-Key": env.SIGNWELL_API_KEY,
+      },
+      body: JSON.stringify(signwellBody),
+    });
+
+    const swData = await swRes.json();
+
+    if (!swRes.ok) {
+      console.error("SignWell error:", JSON.stringify(swData));
+      return jsonResponse(
+        { error: `Could not create the agreement for ${name}. Please try again or contact the office.` },
+        502,
+        env
+      );
+    }
+
+    signingUrl = swData.recipients?.[0]?.embedded_signing_url || swData.embedded_signing_url;
+
+    if (!signingUrl) {
+      console.error("No signing URL in SignWell response:", JSON.stringify(swData));
+      return jsonResponse({ error: "Could not retrieve a signing link. Please contact the office." }, 502, env);
+    }
+  } catch (err) {
+    console.error(err);
+    return jsonResponse({ error: "Unexpected error creating the enrollment." }, 500, env);
+  }
+
+  try {
+    const ts = nowISO();
+    await env.DB.prepare(
+      `INSERT INTO enrollments
+        (enrollment_id, created_at, primary_name, primary_email, member_names, member_count, signing_status, members_signed, payment_status, billing_interval, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, 'pending', 0, 'unpaid', ?, ?)`
+    )
+      .bind(enrollmentId, ts, name, email, name, interval, ts)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO enrollment_members (enrollment_id, member_name, category, signing_status)
+       VALUES (?, ?, 'adult', 'sent')`
+    )
+      .bind(enrollmentId, name)
+      .run();
+  } catch (err) {
+    console.error("D1 write failed on create-solo-enrollment:", err);
+  }
+
+  return jsonResponse({ enrollmentId, payUrl, signingDocuments: [{ name, signingUrl }] }, 200, env);
+}
+
 async function handlePay(request, env) {
   const url = new URL(request.url);
   const token = url.searchParams.get("token");
@@ -178,33 +292,44 @@ async function handlePay(request, env) {
   }
 
   try {
-    const priceGroups = {};
-    for (const m of enrollment.members) {
-      const priceId = env[CATEGORIES[m.category].stripePriceEnv];
-      if (!priceId) throw new Error(`Missing configured price for ${m.category}.`);
-      priceGroups[priceId] = (priceGroups[priceId] || 0) + 1;
-    }
-    const lineItems = Object.entries(priceGroups).map(([price, quantity]) => ({
-      price,
-      quantity,
-    }));
-
     const stripe = getStripe(env);
+    let lineItems;
+    let cancelUrl = env.CANCEL_URL;
+
+    if (enrollment.solo) {
+      // Solo monthly/quarterly flow — single price, quantity 1.
+      const priceId = env[enrollment.priceEnvKey];
+      if (!priceId) throw new Error(`Missing configured price for ${enrollment.billingInterval}.`);
+      lineItems = [{ price: priceId, quantity: 1 }];
+      cancelUrl = `https://dryun.org/enroll-${enrollment.billingInterval}.html`;
+    } else {
+      // Household/annual flow — group members by price so duplicate
+      // categories become one line item with quantity > 1.
+      const priceGroups = {};
+      for (const m of enrollment.members) {
+        const priceId = env[CATEGORIES[m.category].stripePriceEnv];
+        if (!priceId) throw new Error(`Missing configured price for ${m.category}.`);
+        priceGroups[priceId] = (priceGroups[priceId] || 0) + 1;
+      }
+      lineItems = Object.entries(priceGroups).map(([price, quantity]) => ({ price, quantity }));
+    }
+
+    const memberNames = enrollment.solo ? enrollment.name : enrollment.members.map((m) => m.name).join(", ");
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       line_items: lineItems,
       success_url: `${env.SUCCESS_URL}?enrollment=${enrollment.enrollmentId}`,
-      cancel_url: env.CANCEL_URL,
+      cancel_url: cancelUrl,
       subscription_data: {
         metadata: {
           enrollment_id: enrollment.enrollmentId,
-          member_names: enrollment.members.map((m) => m.name).join(", "),
+          member_names: memberNames,
         },
       },
       metadata: {
         enrollment_id: enrollment.enrollmentId,
-        member_names: enrollment.members.map((m) => m.name).join(", "),
+        member_names: memberNames,
       },
     });
 
@@ -241,7 +366,6 @@ async function handleStripeWebhook(request, env) {
     return new Response(`Webhook Error: ${err.message}`, { status: 400 });
   }
 
-  // Initial checkout completion — marks the very first payment for a new enrollment.
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const enrollmentId = session.metadata?.enrollment_id;
@@ -264,9 +388,6 @@ async function handleStripeWebhook(request, env) {
     }
   }
 
-  // Every successful charge going forward — renewals for annual/monthly/quarterly patients,
-  // and the very first payment for patients set up manually (monthly/quarterly via a
-  // Stripe Payment Link, outside the enroll.html flow).
   if (event.type === "invoice.paid") {
     const invoice = event.data.object;
     const subscriptionId = invoice.subscription;
@@ -289,9 +410,6 @@ async function handleStripeWebhook(request, env) {
             .bind(ts, ts, subscriptionId)
             .run();
         } else {
-          // No matching enrollment yet — likely a manually-created monthly/quarterly
-          // patient (Payment Link, not the enroll.html flow). Look up the subscription
-          // to read whatever metadata was set on it, and create a row now.
           const subscription = await stripe.subscriptions.retrieve(subscriptionId);
           const meta = subscription.metadata || {};
           const newEnrollmentId = "MEM-" + Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -326,8 +444,6 @@ async function handleStripeWebhook(request, env) {
     }
   }
 
-  // A renewal charge failed — surface this so the office can follow up before the
-  // membership silently lapses.
   if (event.type === "invoice.payment_failed") {
     const invoice = event.data.object;
     const subscriptionId = invoice.subscription;
@@ -664,6 +780,12 @@ export default {
     try {
       if (pathname === "/api/create-enrollment" && request.method === "POST") {
         return await handleCreateEnrollment(request, env);
+      }
+      if (pathname === "/api/create-enrollment-monthly" && request.method === "POST") {
+        return await handleCreateSoloEnrollment(request, env, "monthly");
+      }
+      if (pathname === "/api/create-enrollment-quarterly" && request.method === "POST") {
+        return await handleCreateSoloEnrollment(request, env, "quarterly");
       }
       if (pathname === "/api/pay" && request.method === "GET") {
         return await handlePay(request, env);
